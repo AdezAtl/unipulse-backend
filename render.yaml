@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: unipulse-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        fromDatabase:
+          name: unipulse-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        value: https://your-frontend-domain.com
+
+databases:
+  - name: unipulse-db
+    plan: free
+    type: mongodb
+    ipAllowList: []
