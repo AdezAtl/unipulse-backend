@@ -14,6 +14,6 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: MONGODB_URI
-        value: your_mongodb_connection_string_here
+        value: mongodb+srv://unipulse-user:123456Aa@unipulse-cluster.mdbj9db.mongodb.net/unipulse?retryWrites=true&w=majority&appName=unipulse-cluster
       - key: CLIENT_URL
         value: https://your-frontend.onrender.com
