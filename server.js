@@ -12,7 +12,6 @@ const server = http.createServer(app);
 
 // Socket.io configuration
 // In your backend (app.js, server.js, or cors config file)
-const cors = require('cors');
 
 const allowedOrigins = [
   'https://your-frontend.onrender.com', // your production frontend
