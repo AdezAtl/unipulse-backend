@@ -11,13 +11,32 @@ const app = express();
 const server = http.createServer(app);
 
 // Socket.io configuration
-const io = socketIo(server, {
-  cors: {
-    origin: process.env.CLIENT_URL || ["http://localhost:3000", "https://your-frontend.onrender.com"],
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    credentials: true
-  }
-});
+// In your backend (app.js, server.js, or cors config file)
+const cors = require('cors');
+
+const allowedOrigins = [
+  'https://your-frontend.onrender.com', // your production frontend
+  'http://localhost:8080',              // your current dev server
+  'http://localhost:3000',              // common React dev server
+  'http://127.0.0.1:8080',              // localhost alternative
+  'http://localhost:5173'               // Vite dev server
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 // Enhanced rate limiting
 const limiter = rateLimit({
