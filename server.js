@@ -1,25 +1,39 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
 const socketIo = require('socket.io');
+const fs = require('fs').promises;
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 const server = http.createServer(app);
 
-// Socket.io configuration
+// ✅ Initialize Socket.IO
+const io = socketIo(server, {
+  cors: {
+    origin: [
+      'https://your-frontend.onrender.com',
+      'http://localhost:8080',
+      'http://localhost:3000',
+      'http://127.0.0.1:8080',
+      'http://localhost:5173'
+    ],
+    methods: ['GET', 'POST']
+  }
+});
 
 const allowedOrigins = [
-  'https://your-frontend.onrender.com', // your production frontend
-  'http://localhost:8080',              // your current dev server
-  'http://localhost:3000',              // common React dev server
-  'http://127.0.0.1:8080',              // localhost alternative
-  'http://localhost:5173'               // Vite dev server
+  'https://your-frontend.onrender.com',
+  'http://localhost:8080',
+  'http://localhost:3000',
+  'http://127.0.0.1:8080',
+  'http://localhost:5173'
 ];
 
+// CORS configuration
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, postman)
@@ -53,77 +67,76 @@ app.use(helmet({
   contentSecurityPolicy: false // Disable for API
 }));
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
-
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// MongoDB connection with enhanced options
-const MONGODB_URI = process.env.MONGODB_URI;
-
-if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI environment variable is not set');
-  console.log('💡 Please set MONGODB_URI in your Render environment variables');
-  process.exit(1);
-}
-
-// Enhanced MongoDB connection options
-const mongooseOptions = {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  retryWrites: true,
-  w: 'majority',
-  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
-  maxPoolSize: 10, // Maintain up to 10 socket connections
-  minPoolSize: 1 // Maintain at least 1 socket connection
+// Simple in-memory database (for testing)
+const db = {
+  users: [],
+  events: [],
+  posts: [],
+  notifications: []
 };
 
-console.log('🔗 Attempting to connect to MongoDB...');
-console.log(`📊 Database: ${MONGODB_URI.split('/').pop().split('?')[0]}`);
+// File-based storage functions
+const DATA_FILE = path.join(__dirname, 'data.json');
 
-mongoose.connect(MONGODB_URI, mongooseOptions)
-.then(() => {
-  console.log('✅ MongoDB connected successfully');
-  console.log(`🏠 Host: ${mongoose.connection.host}`);
-  console.log(`🗃️ Database: ${mongoose.connection.db.databaseName}`);
-})
-.catch(err => {
-  console.error('❌ MongoDB connection error:', err.message);
-  console.log('\n🔧 Troubleshooting tips:');
-  console.log('   1. Check MONGODB_URI in environment variables');
-  console.log('   2. Verify MongoDB Atlas Network Access (IP Whitelist)');
-  console.log('   3. Check database user permissions');
-  console.log('   4. Ensure cluster is running in MongoDB Atlas');
-  process.exit(1);
-});
+// Load data from file
+async function loadData() {
+  try {
+    const data = await fs.readFile(DATA_FILE, 'utf8');
+    const parsed = JSON.parse(data);
+    Object.assign(db, parsed);
+    console.log('✅ Data loaded from file');
+  } catch (error) {
+    console.log('📁 No existing data file, starting fresh');
+    // Initialize with some test data
+    db.users = [
+      {
+        id: '1',
+        name: 'Test User',
+        email: 'test@example.com',
+        password: 'password123',
+        department: 'Computer Science',
+        year: 'Junior',
+        createdAt: new Date().toISOString()
+      }
+    ];
+    await saveData();
+  }
+}
 
-// MongoDB connection events
-mongoose.connection.on('connected', () => {
-  console.log('🗄️ Mongoose connected to MongoDB cluster');
-});
+// Save data to file
+async function saveData() {
+  try {
+    await fs.writeFile(DATA_FILE, JSON.stringify(db, null, 2));
+    console.log('💾 Data saved to file');
+  } catch (error) {
+    console.error('❌ Error saving data:', error.message);
+  }
+}
 
-mongoose.connection.on('error', (err) => {
-  console.error('❌ Mongoose connection error:', err.message);
-});
+// Initialize data storage
+loadData();
 
-mongoose.connection.on('disconnected', () => {
-  console.log('🔌 Mongoose disconnected from MongoDB');
-});
+// Helper functions for local storage
+function generateId() {
+  return Date.now().toString() + Math.random().toString(36).substr(2, 9);
+}
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await mongoose.connection.close();
-  console.log('🛑 MongoDB connection closed through app termination');
-  process.exit(0);
-});
+function findUserByEmail(email) {
+  return db.users.find(user => user.email === email);
+}
+
+function findUserById(id) {
+  return db.users.find(user => user.id === id);
+}
+
+// Make db accessible to routes
+app.set('db', db);
+app.set('saveData', saveData);
+app.set('generateId', generateId);
 
 // Socket.io for real-time notifications
 io.on('connection', (socket) => {
@@ -142,60 +155,174 @@ io.on('connection', (socket) => {
 // Make io accessible to routes
 app.set('io', io);
 
-// Import and use routes with error handling
-try {
-  app.use('/api/auth', require('./routes/auth'));
-  app.use('/api/users', require('./routes/users'));
-  app.use('/api/events', require('./routes/events'));
-  app.use('/api/posts', require('./routes/posts'));
-  app.use('/api/notifications', require('./routes/notifications'));
-  app.use('/api/admin', require('./routes/admin'));
-  console.log('✅ All routes loaded successfully');
-} catch (error) {
-  console.error('❌ Error loading routes:', error.message);
-}
+// Simple auth routes for testing
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { name, email, password, department, year } = req.body;
+    
+    // Check if user already exists
+    if (findUserByEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+    
+    // Create new user
+    const user = {
+      id: generateId(),
+      name,
+      email,
+      password, // In real app, hash this!
+      department,
+      year,
+      createdAt: new Date().toISOString()
+    };
+    
+    db.users.push(user);
+    await saveData();
+    
+    console.log('✅ User registered:', email);
+    
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        department: user.department,
+        year: user.year
+      }
+    });
+  } catch (error) {
+    console.error('Register error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    const user = findUserByEmail(email);
+    if (!user || user.password !== password) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email or password'
+      });
+    }
+    
+    console.log('✅ User logged in:', email);
+    
+    res.json({
+      success: true,
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        department: user.department,
+        year: user.year
+      }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Simple test endpoints
+app.get('/api/users', (req, res) => {
+  res.json({
+    success: true,
+    users: db.users.map(user => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      department: user.department,
+      year: user.year
+    }))
+  });
+});
+
+app.post('/api/events', async (req, res) => {
+  try {
+    const { title, description, date, location } = req.body;
+    
+    const event = {
+      id: generateId(),
+      title,
+      description,
+      date,
+      location,
+      createdAt: new Date().toISOString(),
+      attendees: []
+    };
+    
+    db.events.push(event);
+    await saveData();
+    
+    res.status(201).json({
+      success: true,
+      message: 'Event created successfully',
+      event
+    });
+  } catch (error) {
+    console.error('Create event error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+app.get('/api/events', (req, res) => {
+  res.json({
+    success: true,
+    events: db.events
+  });
+});
 
 // Enhanced Health check endpoint
 app.get('/health', async (req, res) => {
-  const dbStatus = mongoose.connection.readyState;
-  const statusMap = {
-    0: 'disconnected',
-    1: 'connected', 
-    2: 'connecting',
-    3: 'disconnecting'
-  };
-  
-  const healthStatus = dbStatus === 1 ? 'healthy' : 'unhealthy';
-  
-  res.status(dbStatus === 1 ? 200 : 503).json({ 
-    status: healthStatus,
+  res.status(200).json({ 
+    status: 'healthy',
     message: 'UniPulse API Health Check',
-    database: statusMap[dbStatus],
+    database: 'local-storage',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
+    environment: process.env.NODE_ENV || 'development',
     uptime: process.uptime(),
     memory: process.memoryUsage(),
-    version: '1.0.0'
+    version: '1.0.0',
+    stats: {
+      users: db.users.length,
+      events: db.events.length,
+      posts: db.posts.length
+    }
   });
 });
 
 // API Info endpoint
 app.get('/api', (req, res) => {
   res.json({
-    message: '🚀 UniPulse Backend API',
+    message: '🚀 UniPulse Backend API (Local Storage)',
     version: '1.0.0',
     status: 'operational',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    database: 'local-storage',
     endpoints: {
-      auth: '/api/auth',
-      users: '/api/users', 
-      events: '/api/events',
-      posts: '/api/posts',
-      notifications: '/api/notifications',
-      admin: '/api/admin',
-      health: '/health'
+      auth: ['POST /api/auth/register', 'POST /api/auth/login'],
+      users: 'GET /api/users',
+      events: ['GET /api/events', 'POST /api/events'],
+      health: 'GET /health'
     },
-    documentation: 'Add Swagger docs later'
+    note: 'Using local file storage for testing'
   });
 });
 
@@ -207,33 +334,6 @@ app.get('/', (req, res) => {
 // Enhanced Error handling middleware
 app.use((err, req, res, next) => {
   console.error('💥 Error Stack:', err.stack);
-  
-  // Mongoose validation error
-  if (err.name === 'ValidationError') {
-    const messages = Object.values(err.errors).map(val => val.message);
-    return res.status(400).json({
-      success: false,
-      message: 'Validation Error',
-      errors: messages
-    });
-  }
-  
-  // Mongoose duplicate key error
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
-    return res.status(400).json({
-      success: false,
-      message: `${field} already exists`
-    });
-  }
-  
-  // JWT errors
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
   
   // Default error
   res.status(err.status || 500).json({
@@ -250,10 +350,9 @@ app.use('*', (req, res) => {
     message: `Route ${req.originalUrl} not found`,
     method: req.method,
     availableEndpoints: {
-      auth: ['POST /api/auth/register', 'POST /api/auth/login', 'GET /api/auth/me'],
-      users: ['GET /api/users', 'GET /api/users/:id', 'PUT /api/users/profile'],
-      events: ['GET /api/events', 'POST /api/events', 'POST /api/events/:id/rsvp'],
-      posts: ['GET /api/posts', 'POST /api/posts', 'POST /api/posts/:id/like'],
+      auth: ['POST /api/auth/register', 'POST /api/auth/login'],
+      users: 'GET /api/users',
+      events: ['GET /api/events', 'POST /api/events'],
       health: 'GET /health'
     }
   });
@@ -265,9 +364,15 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('\n🎉 =================================');
   console.log(`🚀 UniPulse Server Started!`);
   console.log(`📍 Port: ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
-  console.log(`📊 Database: ${mongoose.connection.readyState === 1 ? '✅ Connected' : '❌ Disconnected'}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`💾 Database: Local Storage`);
+  console.log(`📁 Data File: ${DATA_FILE}`);
   console.log(`🔗 Health Check: http://localhost:${PORT}/health`);
   console.log(`📚 API Info: http://localhost:${PORT}/api`);
+  console.log('=================================\n');
+  console.log('📝 Test Endpoints:');
+  console.log(`   POST http://localhost:${PORT}/api/auth/register`);
+  console.log(`   POST http://localhost:${PORT}/api/auth/login`);
+  console.log(`   GET  http://localhost:${PORT}/api/users`);
   console.log('=================================\n');
 });
